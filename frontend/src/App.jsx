@@ -93,43 +93,30 @@ export default function App() {
         {/* Dark overlay */}
         <div className="absolute inset-0 z-[1] bg-gradient-to-b from-black/40 via-transparent to-black/80 pointer-events-none" />
 
-        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 md:px-12 pt-32 pb-16 flex flex-col justify-end min-h-screen">
+        <div className="relative z-10 max-w-7xl mx-auto w-full px-4 sm:px-6 md:px-12 pb-12 sm:pb-16 flex flex-col justify-end min-h-[90vh]">
           <Fade delay={200}>
-            <div className="flex items-center gap-3 mb-6 text-xs sm:text-sm">
-              <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-glow" /><span className="font-pixel text-emerald-400 text-[10px] sm:text-xs tracking-wider">LIVE ON SEPOLIA</span></span>
-              <span className="text-white/20">•</span>
-              <span className="flex items-center gap-1 text-white/40"><Cpu size={13} /> 3 Agents</span>
-              <span className="text-white/20">•</span>
-              <span className="flex items-center gap-1 text-white/40"><Shield size={13} /> Zero Servers</span>
+            <div className="flex items-center gap-3 mb-5">
+              <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-glow" /><span className="font-pixel text-emerald-400 text-[10px] sm:text-xs tracking-[0.2em] uppercase">System Live</span></span>
             </div>
           </Fade>
 
           <Fade delay={400}>
-            <h1 className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-normal tracking-[-0.04em] mb-5 leading-[1.05]">
-              <span className="font-pixel">Decentralized</span> Agents.
-              <br />
-              <span className="gradient-text">Autonomous Intelligence.</span>
+            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-pixel tracking-wide text-white/90 leading-[1.3] mb-8 max-w-4xl">
+              Decentralized Agents.<br />
+              <span className="text-emerald-400/80">Autonomous Intelligence.</span>
             </h1>
           </Fade>
 
-          <Fade delay={550}>
-            <p className="text-base sm:text-lg md:text-xl text-gray-400 mb-8 max-w-2xl leading-relaxed">
-              AI agents discover each other via <span className="text-sky-400">ENS</span>,
-              communicate through <span className="text-pink-400">Gensyn AXL</span>,
-              and execute on-chain via <span className="text-amber-400">KeeperHub</span>.
-            </p>
-          </Fade>
-
-          <div className="flex flex-wrap gap-3 sm:gap-4">
-            <Fade delay={650}>
-              <a href="#how-it-works" className="bg-white text-black rounded-full font-medium px-7 py-3 flex items-center gap-2 hover:bg-gray-200 transition-colors">
-                <Play size={16} fill="black" /> See How It Works
+          <div className="flex flex-wrap gap-4">
+            <Fade delay={500}>
+              <a href="#how-it-works" className="bg-emerald-400/10 border border-emerald-400/30 text-emerald-400 font-pixel text-xs sm:text-sm px-6 py-3 flex items-center gap-2 hover:bg-emerald-400/20 transition-colors">
+                <Play size={14} fill="currentColor" /> EXPLORE_PIPELINE
               </a>
             </Fade>
-            <Fade delay={750}>
+            <Fade delay={600}>
               <a href="https://github.com/Zireaelst/AGENTNS" target="_blank" rel="noopener noreferrer"
-                className="liquid-glass rounded-full font-medium px-7 py-3 flex items-center gap-2 text-white/80 hover:text-white transition-colors">
-                <GitBranch size={16} /> View Source
+                className="liquid-glass font-pixel text-xs sm:text-sm px-6 py-3 flex items-center gap-2 text-white/80 hover:text-white transition-colors border-0">
+                <GitBranch size={14} /> REPOSITORY
               </a>
             </Fade>
           </div>
