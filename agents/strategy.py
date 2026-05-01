@@ -1,51 +1,44 @@
 """
 agents/strategy.py
-Strategy Agent — Receives task from Scout, analyzes with LLM,
-resolves Executor via ENS, sends execution order via AXL.
-
-KEY: Strategy discovers Executor dynamically via ENS capability search.
-     Decision reasoning is displayed step-by-step for demo clarity.
-
-Upgraded with:
-  - Persistent daemon loop (GAP 3)
+Strategy Agent (strategy.agentns.eth)
+  • Daemon loop — continuously listens for tasks via AXL
+  • Uses LLM (Gemini/OpenRouter/Claude/Ollama) to analyze opportunities
+  • Falls back to rule-based decisions if no LLM available
+  • Resolves executor.agentns.eth via ENS
+  • Forwards execution order to Executor via AXL
 
 Run: python -m agents.strategy
 """
 
-import os
-import sys
-import json
-import anthropic
-from dotenv import load_dotenv
-
-load_dotenv()
+import os, sys, json, time, signal
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from dotenv import load_dotenv
+load_dotenv()
 
-from utils.axl_client import AXLClient
+from utils.axl_client  import AXLClient
 from utils.ens_resolver import get_resolver
-from utils.message import (
-    create_message, parse_message, serialize, format_summary,
-    MSG_DECISION, MSG_ACK,
-)
-from utils.logger import log, separator, detail, success, info
+from utils.logger       import log, phase, banner
+from utils.llm_client   import chat, is_available, get_active_provider
 
-# ─── Config ─────────────────────────────────────────────────────
-AXL_PORT       = int(os.getenv("STRATEGY_AXL_PORT", "9012"))
-ENS_PARENT     = os.getenv("ENS_PARENT", "agentns.eth")
-ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY")
+AXL_PORT     = int(os.getenv("STRATEGY_AXL_PORT", "9012"))
+EXECUTOR_ENS = "executor.agentns.eth"
 
-SYSTEM_PROMPT = """You are a DeFi strategy agent in a multi-agent swarm.
-You receive market opportunities from scout agents and decide whether to act.
+_running = True
+signal.signal(signal.SIGINT,  lambda *_: globals().update(_running=False))
+signal.signal(signal.SIGTERM, lambda *_: globals().update(_running=False))
+
+DECISION_SYSTEM = """You are a DeFi risk-management agent in a decentralized swarm.
+Evaluate the opportunity and decide whether to execute it.
 
 Rules:
-- If confidence > 0.8: approve execution
-- If confidence 0.5-0.8: approve with reduced amount (50%)
-- If confidence < 0.5: reject
+- confidence > 0.85 → approve full amount
+- 0.65 ≤ confidence ≤ 0.85 → approve_partial (50% amount)  
+- confidence < 0.65 → reject
 
-Respond ONLY with valid JSON:
+Respond ONLY with valid JSON (no markdown, no preamble):
 {
-  "decision": "approve" | "reject" | "approve_partial",
-  "reason": "brief explanation",
+  "decision": "approve" | "approve_partial" | "reject",
+  "reason": "one sentence",
   "action": {
     "type": "swap",
     "token_in": "...",
@@ -56,182 +49,164 @@ Respond ONLY with valid JSON:
 }"""
 
 
-def decide_with_llm(task: dict) -> dict:
-    """Use Claude to analyze the opportunity and decide."""
-    if not ANTHROPIC_KEY:
-        confidence = task.get("opportunity", {}).get("confidence", 0)
-        amount = task.get("opportunity", {}).get("amount", "100")
+def _extract_json_from_response(raw: str) -> dict:
+    """Extract JSON from LLM response, handling markdown fences."""
+    import re
+    text = raw.strip()
+    # Strip markdown fences
+    if text.startswith("```"):
+        text = "\n".join(text.split("\n")[1:])
+        if text.endswith("```"):
+            text = text[:-3]
+        elif "```" in text:
+            text = text[:text.rfind("```")]
+        text = text.strip()
+    # Try direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Try to find JSON object in text
+    match = re.search(r'\{[^{}]*"decision"[^{}]*\}', text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+    raise ValueError(f"Could not parse JSON from LLM response: {text[:200]}")
 
-        if confidence > 0.8:
-            decision = "approve"
-            final_amount = amount
-        elif confidence >= 0.5:
-            decision = "approve_partial"
-            final_amount = str(int(float(amount) * 0.5))
-        else:
-            decision = "reject"
-            final_amount = "0"
 
-        return {
-            "decision": decision,
-            "reason": f"Confidence {confidence*100:.0f}% — {'exceeds' if confidence > 0.8 else 'below'} 80% threshold. Pool fundamentals strong.",
-            "risk_level": "LOW" if confidence > 0.7 else "MEDIUM" if confidence > 0.5 else "HIGH",
-            "action": {
-                "type": "swap",
-                "token_in": task.get("opportunity", {}).get("token_in", "USDC"),
-                "token_out": task.get("opportunity", {}).get("token_out", "ETH"),
-                "amount": final_amount,
-                "slippage": "0.5",
-            }
+def _rule_based_decide(opportunity: dict) -> dict:
+    """Deterministic rule-based fallback — always works, no API needed."""
+    conf = opportunity.get("confidence", 0)
+    if conf > 0.85:
+        decision, amount = "approve",         opportunity.get("amount", "500")
+    elif conf >= 0.65:
+        decision, amount = "approve_partial",  str(int(float(opportunity.get("amount", "500")) * 0.5))
+    else:
+        decision, amount = "reject",           "0"
+    return {
+        "decision": decision,
+        "reason":   f"Rule-based: confidence={conf}",
+        "action": {
+            "type":      "swap",
+            "token_in":  opportunity.get("token_in",  "USDC"),
+            "token_out": opportunity.get("token_out", "ETH"),
+            "amount":    amount,
+            "slippage":  "0.5",
         }
-
-    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=400,
-        system=SYSTEM_PROMPT,
-        messages=[{
-            "role": "user",
-            "content": f"Analyze this opportunity and decide: {json.dumps(task, indent=2)}"
-        }]
-    )
-    raw = response.content[0].text.strip()
-    # Strip markdown fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw)
+    }
 
 
-def display_reasoning(opportunity: dict, decision: dict):
-    """Show step-by-step decision reasoning — makes demo impressive."""
-    separator("Decision Reasoning")
-    confidence = opportunity.get("confidence", 0)
-    signal = opportunity.get("signal", "Unknown")
-    token_in = opportunity.get("token_in", "?")
-    token_out = opportunity.get("token_out", "?")
-    amount = decision.get("action", {}).get("amount", "?")
-    risk = decision.get("risk_level", "UNKNOWN")
+def decide(opportunity: dict) -> dict:
+    """
+    Use LLM to analyze opportunity.
+    Tries: Google Gemini → OpenRouter → Anthropic → Ollama → Rule-based.
+    """
+    if not is_available():
+        log("strategy", "No LLM available — using rule-based decision")
+        return _rule_based_decide(opportunity)
 
-    log("strategy", f"Signal:       {signal}", "magenta")
-    log("strategy", f"Confidence:   {confidence*100:.0f}% {'✓' if confidence > 0.8 else '△' if confidence > 0.5 else '✗'}", "magenta")
-    log("strategy", f"Threshold:    80% for full approval", "magenta")
-    log("strategy", f"Risk level:   {risk}", "green" if risk == "LOW" else "yellow" if risk == "MEDIUM" else "red")
-    log("strategy", f"Pair:         {token_in}/{token_out}", "magenta")
-    log("strategy", f"Size:         {amount} {token_in}", "magenta")
-    log("strategy", f"Slippage:     {decision.get('action', {}).get('slippage', '?')}%", "magenta")
-
-    verdict = decision["decision"]
-    if verdict == "approve":
-        log("strategy", f"Verdict:      APPROVE ✓ (full amount)", "green")
-    elif verdict == "approve_partial":
-        log("strategy", f"Verdict:      APPROVE PARTIAL △ (reduced size)", "yellow")
-    else:
-        log("strategy", f"Verdict:      REJECT ✗", "red")
-    log("strategy", f"Reason:       {decision.get('reason', '')}", "magenta")
+    try:
+        provider = get_active_provider()
+        log("strategy", f"Analyzing with {provider.upper()}…")
+        raw = chat(
+            system=DECISION_SYSTEM,
+            user=json.dumps(opportunity, indent=2),
+            max_tokens=512,
+        )
+        return _extract_json_from_response(raw)
+    except Exception as e:
+        log("strategy", f"LLM failed ({e}) — falling back to rule-based", ok=False)
+        return _rule_based_decide(opportunity)
 
 
-def _handle_strategy_cycle(axl, our_peer_id, my_name, cycle: int):
-    """Handle a single strategy receive-analyze-forward cycle."""
-    # 1. Wait for task from Scout
-    separator(f"Cycle #{cycle} — Waiting for task from Scout (AXL)")
-    incoming_msg, from_peer = axl.recv_message(timeout=60)
-    if not incoming_msg:
-        log("strategy", "No task received this cycle", "yellow")
+def process_task(axl: AXLClient, resolver, msg: dict) -> None:
+    """Handle one incoming task from Scout."""
+    from_peer = msg["from_peer_id"]
+    task      = msg["data"]
+    opp       = task.get("opportunity", {})
+
+    log("strategy", f"Task from {task.get('from', from_peer[:14])}")
+    log("strategy", f"Signal: {opp.get('signal','?')}")
+    log("strategy", f"Confidence: {opp.get('confidence')}")
+
+    # Ack immediately
+    axl.send(from_peer, {"type": "ack", "status": "received", "from": "strategy.agentns.eth"})
+
+    # LLM decision
+    provider = get_active_provider()
+    phase(f"LLM Analysis ({provider.upper()})")
+    result = decide(opp)
+    log("strategy", f"Decision: {result['decision'].upper()}")
+    log("strategy", f"Reason:   {result['reason']}")
+
+    if result["decision"] == "reject":
+        log("strategy", "Opportunity rejected — no execution needed", ok=False)
         return
 
-    trace_id = incoming_msg.get("trace_id", "unknown")
-    log("strategy", f"Received task (trace: {trace_id})", "green")
-
-    task = incoming_msg.get("payload", incoming_msg)
-    opportunity = task.get("opportunity", {})
-    log("strategy", f"Task type: {task.get('task')}", "magenta")
-    log("strategy", f"Signal: {opportunity.get('signal', 'N/A')}", "magenta")
-    log("strategy", f"From: {incoming_msg.get('from', 'unknown')}", "magenta")
-
-    # 2. Send ack back to Scout
-    from_peer_id = task.get("from_peer_id", from_peer)
-    if from_peer_id:
-        ack = create_message(MSG_ACK, my_name, incoming_msg.get("from", ""), {"status": "received"}, trace_id)
-        axl.send(from_peer_id, serialize(ack))
-
-    # 3. Analyze with LLM
-    separator("Analysis & Decision")
-    log("strategy", "Analyzing opportunity...", "magenta")
-    decision = decide_with_llm(task)
-
-    # 4. Display reasoning (key demo moment)
-    display_reasoning(opportunity, decision)
-
-    if decision["decision"] == "reject":
-        log("strategy", "Task rejected. No execution needed.", "yellow")
-        return
-
-    # 5. Discover Executor via ENS — DYNAMIC CAPABILITY SEARCH
-    separator("Discovering Executor via ENS")
-    resolver = get_resolver()
-    log("strategy", "Finding best agent with 'execute' capability...", "yellow")
-    executor = resolver.find_best_agent(ENS_PARENT, capability="execute")
-
+    # Resolve Executor via ENS
+    phase("ENS Discovery → executor.agentns.eth")
+    executor = resolver.resolve(EXECUTOR_ENS)
     if not executor:
-        log("strategy", "No suitable executor found in ENS", "red")
+        log("strategy", f"Cannot resolve {EXECUTOR_ENS}", ok=False)
         return
 
-    log("strategy", f"Selected: {executor['name']}", "green")
-    log("strategy", f"  capabilities: {executor['capabilities']}", "green")
-    log("strategy", f"  reputation:   {executor['reputation']}/5.0", "green")
+    log("strategy", f"Resolved:   {EXECUTOR_ENS}")
+    log("strategy", f"peer_id:    {executor['peer_id'][:20]}…")
+    log("strategy", f"reputation: {executor['reputation']}")
 
-    # 6. Build execution order with standard envelope
-    execution_msg = create_message(
-        msg_type=MSG_DECISION,
-        from_agent=my_name,
-        to_agent=executor["name"],
-        payload={
-            "order_type": "swap_execution",
-            "decision": decision,
-            "original_task_from": incoming_msg.get("from"),
-            "from_peer_id": our_peer_id,
-            "chain_id": 1,
-        },
-        trace_id=trace_id,
-    )
-
-    # 7. Send to Executor via AXL
-    separator("Sending execution order to Executor (AXL)")
-    sent = axl.send(executor["peer_id"], serialize(execution_msg))
-
-    if sent:
-        log("strategy", "Execution order dispatched ✓", "green")
-        log("strategy", f"Pipeline: scout → strategy → executor (trace: {trace_id})", "cyan")
-        resolver.update_reputation(incoming_msg.get("from", ""), 0.05)
+    # Forward execution order via AXL
+    phase("AXL → Dispatch to Executor (P2P encrypted)")
+    order = {
+        "type":           "execution_order",
+        "from":           "strategy.agentns.eth",
+        "from_peer_id":   axl.peer_id(),
+        "decision":       result,
+        "original_from":  task.get("from"),
+        "timestamp":      int(time.time()),
+    }
+    ok = axl.send(executor["peer_id"], order)
+    if ok:
+        log("strategy", "Execution order dispatched ✓")
     else:
-        log("strategy", "Failed to reach Executor", "red")
-
-    separator("STRATEGY CYCLE DONE")
+        log("strategy", "AXL send to executor failed", ok=False)
 
 
 def main():
-    """Strategy agent main loop — listens for tasks indefinitely."""
-    my_name = f"strategy.{ENS_PARENT}"
+    provider = get_active_provider()
+    banner("STRATEGY AGENT — strategy.agentns.eth",
+           f"LLM={provider} → ENS discover → AXL forward")
 
-    separator("STRATEGY AGENT STARTING")
-    log("strategy", f"AXL port: {AXL_PORT}", "magenta")
+    axl = AXLClient(AXL_PORT, "strategy")
+    log("strategy", f"Connecting to AXL node on port {AXL_PORT}…")
+    if not axl.wait_ready():
+        log("strategy", "AXL node not available", ok=False)
+        sys.exit(1)
+    log("strategy", f"AXL ready. peer_id={axl.peer_id()[:20]}…")
 
-    # Connect to AXL node
-    axl = AXLClient(port=AXL_PORT, agent_name="strategy")
-    our_peer_id = axl.get_peer_id()
-    log("strategy", f"My peer_id: {our_peer_id[:20]}...", "magenta")
+    resolver = get_resolver()
+    cycle    = 0
 
-    cycle = 0
-    try:
-        while True:
-            cycle += 1
-            log("strategy", f"[STRATEGY] Cycle #{cycle} — listening...", "magenta")
-            _handle_strategy_cycle(axl, our_peer_id, my_name, cycle)
-    except KeyboardInterrupt:
-        log("strategy", "[STRATEGY] Shutting down gracefully", "yellow")
-        sys.exit(0)
+    log("strategy", "Listening for tasks… (Ctrl+C to stop)")
+
+    while _running:
+        cycle += 1
+        log("strategy", f"Cycle #{cycle} — waiting for AXL message…")
+        msg = axl.recv(timeout=120)
+        if not msg:
+            if _running:
+                log("strategy", "No message in 120s, still listening…", ok=False)
+            continue
+        # Skip acks sent from ourselves
+        if msg["data"].get("type") == "ack":
+            continue
+        try:
+            process_task(axl, resolver, msg)
+        except Exception as e:
+            log("strategy", f"Error processing task: {e}", ok=False)
+
+    log("strategy", "Shutting down gracefully ✓")
 
 
 if __name__ == "__main__":
