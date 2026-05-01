@@ -1,141 +1,118 @@
 #!/bin/bash
 # setup/1_run_axl_nodes.sh
-# Starts 3 AXL nodes locally — one per agent.
-# Each node gets its own keypair, config, and port.
-#
-# Ports:
-#   Scout    → api:9002 tcp:7000
-#   Strategy → api:9012 tcp:7001
-#   Executor → api:9022 tcp:7002
-#
-# Run from agentns/ root: bash setup/1_run_axl_nodes.sh
-
+# Builds AXL binary and starts 3 nodes (scout/strategy/executor).
+# Run from the agentns/ project root: bash setup/1_run_axl_nodes.sh
 set -e
+C='\033[96m'; G='\033[92m'; Y='\033[93m'; R='\033[91m'; B='\033[1m'; N='\033[0m'
 
-AXL_DIR="${AXL_DIR:-../axl}"
-KEYS_DIR="./keys"
-LOGS_DIR="./logs"
-
-# ─── Colors ──────────────────────────────────────────────────────
-CYAN='\033[96m'
-GREEN='\033[92m'
-YELLOW='\033[93m'
-RESET='\033[0m'
-BOLD='\033[1m'
-
-echo ""
-echo -e "${BOLD}${CYAN}─────────────────────────────────────${RESET}"
-echo -e "${BOLD}${CYAN}  AGENTNS — AXL Node Launcher${RESET}"
-echo -e "${BOLD}${CYAN}─────────────────────────────────────${RESET}"
-echo ""
-
-# ─── Check AXL binary ────────────────────────────────────────────
-if [ ! -f "$AXL_DIR/node" ]; then
-  echo -e "${YELLOW}Building AXL binary...${RESET}"
-  cd "$AXL_DIR"
-  go build -o node ./cmd/node/
-  cd -
-  echo -e "${GREEN}✓ AXL binary built${RESET}"
-fi
-
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+AXL_DIR="${AXL_DIR:-$PROJECT_ROOT/../axl}"
+KEYS_DIR="$PROJECT_ROOT/keys"
+LOGS_DIR="$PROJECT_ROOT/logs"
 mkdir -p "$KEYS_DIR" "$LOGS_DIR"
 
-# ─── Generate keys if needed ─────────────────────────────────────
-generate_key() {
-  local name=$1
-  local keyfile="$KEYS_DIR/${name}-private.pem"
-  if [ ! -f "$keyfile" ]; then
-    echo -e "${YELLOW}Generating key for ${name}...${RESET}"
-    # Try Homebrew openssl first (macOS), then system openssl
-    if command -v /opt/homebrew/opt/openssl/bin/openssl &>/dev/null; then
-      /opt/homebrew/opt/openssl/bin/openssl genpkey -algorithm ed25519 -out "$keyfile" 2>/dev/null
-    else
-      openssl genpkey -algorithm ed25519 -out "$keyfile" 2>/dev/null
-    fi
-    echo -e "${GREEN}✓ Key saved: ${keyfile}${RESET}"
-  else
-    echo -e "${GREEN}✓ Key exists: ${keyfile}${RESET}"
+echo -e "\n${B}${C}══════════════════════════════════════${N}"
+echo -e "${B}${C}  AGENTNS — AXL Node Launcher${N}"
+echo -e "${B}${C}══════════════════════════════════════${N}\n"
+
+# ── Build AXL binary ─────────────────────────────────────────────
+if [ ! -f "$AXL_DIR/node" ]; then
+  echo -e "${Y}Building AXL binary from $AXL_DIR …${N}"
+  if [ ! -d "$AXL_DIR" ]; then
+    echo -e "${R}AXL repo not found at $AXL_DIR${N}"
+    echo -e "Run: git clone https://github.com/gensyn-ai/axl.git $AXL_DIR"
+    exit 1
   fi
+  cd "$AXL_DIR"
+  # Go 1.26 compatibility (from official docs)
+  if go version | grep -q "go1.26"; then
+    GOTOOLCHAIN=go1.25.5 go build -o node ./cmd/node/
+  else
+    go build -o node ./cmd/node/
+  fi
+  cd "$PROJECT_ROOT"
+  echo -e "${G}✓ AXL binary built${N}"
+else
+  echo -e "${G}✓ AXL binary exists${N}"
+fi
+
+# ── Generate keypairs ────────────────────────────────────────────
+gen_key() {
+  local name="$1"
+  local file="$KEYS_DIR/${name}.pem"
+  [ -f "$file" ] && echo -e "${G}✓ Key exists: ${name}${N}" && return
+  # macOS: use brew openssl; Linux: use system openssl
+  if /opt/homebrew/opt/openssl/bin/openssl version &>/dev/null 2>&1; then
+    /opt/homebrew/opt/openssl/bin/openssl genpkey -algorithm ed25519 -out "$file" 2>/dev/null
+  else
+    openssl genpkey -algorithm ed25519 -out "$file"
+  fi
+  echo -e "${G}✓ Key generated: ${name}${N}"
 }
+gen_key scout
+gen_key strategy
+gen_key executor
 
-generate_key "scout"
-generate_key "strategy"
-generate_key "executor"
-
-# ─── Create configs ──────────────────────────────────────────────
-create_config() {
-  local name=$1
-  local api_port=$2
-  local tcp_port=$3
-  local peers=$4
-  local config_file="$KEYS_DIR/${name}-config.json"
-
-  cat > "$config_file" <<EOF
+# ── Write node configs ────────────────────────────────────────────
+write_config() {
+  local name="$1" api_port="$2" tcp_port="$3" peer="$4"
+  local peers_json=""
+  [ -n "$peer" ] && peers_json="\"tls://127.0.0.1:${peer}\""
+  cat > "$KEYS_DIR/${name}.json" <<EOF
 {
-  "PrivateKeyPath": "../../agentns/${KEYS_DIR}/${name}-private.pem",
+  "PrivateKeyPath": "$KEYS_DIR/${name}.pem",
   "api_port": ${api_port},
   "tcp_port": ${tcp_port},
-  "Peers": [${peers}]
+  "Peers": [${peers_json}]
 }
 EOF
-  echo -e "${GREEN}✓ Config: ${config_file}${RESET}"
+  echo -e "${G}✓ Config: ${name} api=:${api_port} tcp=:${tcp_port}${N}"
 }
+# Scout is the bootstrap peer; strategy+executor connect to it
+write_config scout    9002 7000 ""
+write_config strategy 9012 7001 7000
+write_config executor 9022 7002 7000
 
-# Nodes connect to each other
-create_config "scout"    9002 7000 ""
-create_config "strategy" 9012 7001 '"tls://127.0.0.1:7000"'
-create_config "executor" 9022 7002 '"tls://127.0.0.1:7000"'
-
-# ─── Kill existing nodes ──────────────────────────────────────────
-echo ""
-echo -e "${YELLOW}Stopping any existing AXL nodes...${RESET}"
-pkill -f "node.*agentns" 2>/dev/null || true
+# ── Kill any running nodes ────────────────────────────────────────
+echo -e "\n${Y}Stopping old nodes…${N}"
+for f in "$LOGS_DIR"/*.pid; do
+  [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true
+done
 sleep 1
 
-# ─── Start nodes ─────────────────────────────────────────────────
+# ── Start nodes ───────────────────────────────────────────────────
 start_node() {
-  local name=$1
-  local config="$KEYS_DIR/${name}-config.json"
-  local log_file="$LOGS_DIR/${name}.log"
-
-  "$AXL_DIR/node" -config "$config" > "$log_file" 2>&1 &
-  local pid=$!
-  echo $pid > "$LOGS_DIR/${name}.pid"
-  echo -e "${GREEN}✓ ${name} node started (PID: ${pid}, log: ${log_file})${RESET}"
+  local name="$1"
+  "$AXL_DIR/node" -config "$KEYS_DIR/${name}.json" > "$LOGS_DIR/${name}.log" 2>&1 &
+  echo $! > "$LOGS_DIR/${name}.pid"
+  echo -e "${G}✓ ${name} started (PID=$!, log=logs/${name}.log)${N}"
 }
-
-echo ""
-echo -e "${BOLD}Starting AXL nodes...${RESET}"
-start_node "scout"
+echo -e "\n${B}Starting nodes…${N}"
+start_node scout
 sleep 1
-start_node "strategy"
+start_node strategy
 sleep 1
-start_node "executor"
-sleep 2
+start_node executor
+sleep 3
 
-# ─── Verify ──────────────────────────────────────────────────────
-echo ""
-echo -e "${BOLD}Verifying nodes...${RESET}"
-verify_node() {
-  local name=$1
-  local port=$2
+# ── Verify ────────────────────────────────────────────────────────
+echo -e "\n${B}Verifying…${N}"
+verify() {
+  local name="$1" port="$2"
   local key
-  key=$(curl -s "http://127.0.0.1:${port}/topology" | python3 -c "import sys,json; print(json.load(sys.stdin)['our_public_key'])" 2>/dev/null)
+  key=$(curl -s "http://127.0.0.1:${port}/topology" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['our_public_key'])" 2>/dev/null) || true
   if [ -n "$key" ]; then
-    echo -e "${GREEN}✓ ${name}: ${key:0:16}...${RESET}"
+    echo -e "${G}✓ ${name}: ${key:0:16}…${N}"
   else
-    echo -e "${YELLOW}⚠ ${name}: node not ready yet (check logs/${name}.log)${RESET}"
+    echo -e "${Y}⚠ ${name}: not ready yet — check logs/${name}.log${N}"
   fi
 }
+verify scout    9002
+verify strategy 9012
+verify executor 9022
 
-verify_node "scout"    9002
-verify_node "strategy" 9012
-verify_node "executor" 9022
-
-echo ""
-echo -e "${BOLD}${GREEN}─────────────────────────────────────${RESET}"
-echo -e "${BOLD}${GREEN}  All nodes running ✓${RESET}"
-echo -e "${BOLD}${GREEN}─────────────────────────────────────${RESET}"
-echo ""
-echo -e "Next: ${CYAN}bash setup/3_export_keys.sh${RESET}"
-echo ""
+echo -e "\n${B}${G}══════════════════════════════════════${N}"
+echo -e "${B}${G}  All nodes started ✓${N}"
+echo -e "${B}${G}══════════════════════════════════════${N}"
+echo -e "\nNext: ${C}bash setup/3_export_keys.sh${N}\n"
