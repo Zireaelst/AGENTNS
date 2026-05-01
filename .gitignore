@@ -1,1 +1,28 @@
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environments
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+dist/
+build/
+
+# IDEs and OS
+.vscode/
+.idea/
+.DS_Store
+
+# V2 Templates Backup
+v2_templates/
+keys/
+logs/
+
