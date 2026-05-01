@@ -1,0 +1,7 @@
+# AGENTNS Python Dependencies
+requests>=2.31.0
+python-dotenv>=1.0.0
+anthropic>=0.25.0
+web3>=6.15.0
+eth-ens-namehash>=0.1.0
+eth-abi>=5.0.0
