@@ -3,9 +3,9 @@
 > AI agents that discover each other via ENS, communicate via Gensyn AXL, execute via KeeperHub.
 > No central registry. No servers. Just P2P.
 
-## Architecture
+## System Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                        AGENTNS SYSTEM                           │
 │                                                                 │
@@ -30,69 +30,54 @@
 │                             │  :9022         │    (onchain)    │
 │                             └────────────────┘                  │
 └─────────────────────────────────────────────────────────────────┘
-
-Flow:
-1. Scout detects opportunity → resolves strategy.agentns.eth via ENS
-2. Gets strategy's AXL peer ID from text record
-3. Sends task via AXL (P2P encrypted, no server)
-4. Strategy analyzes → resolves executor.agentns.eth
-5. Sends execution order via AXL
-6. Executor submits to KeeperHub → onchain tx confirmed
 ```
 
-## Project Structure
+## Deep-Dive Documentation & Mathematics
 
-```
-agentns/
-├── README.md
-├── .env.example
-├── requirements.txt
-├── package.json                 # for ENS scripts
-│
-├── setup/
-│   ├── 1_run_axl_nodes.sh       # Start 3 AXL nodes
-│   ├── 2_register_ens.js        # Create subnames + set text records
-│   └── 3_export_keys.sh         # Export peer IDs to .env
-│
-├── agents/
-│   ├── scout.py                 # Finds opportunities, triggers flow
-│   ├── strategy.py              # Analyzes task, decides action
-│   └── executor.py              # Executes onchain via KeeperHub
-│
-├── utils/
-│   ├── axl_client.py            # AXL HTTP wrapper
-│   ├── ens_resolver.py          # ENS text record reader (web3.py)
-│   └── logger.py                # Colored terminal output
-│
-└── demo.sh                      # One-command demo runner
-```
+To understand the core mechanisms, cryptography, and fallback mathematics behind AGENTNS, please refer to our detailed documentation suite:
 
-## Quick Start
+- 📖 **[ENS Integration & Identity Mechanics](docs/ENS_INTEGRATION.md)**
+  *Explains the EIP-137 namehash mapping, text records bypass, and the `pending` nonce mechanic used to calculate and update cross-agent reputation without transaction collision.*
+- 🌐 **[Gensyn AXL Mesh Network](docs/AXL_MESH_NETWORK.md)**
+  *Explains the Ed25519 Peer ID cryptography, macOS port mapping logic (`7700-7702`), and secure JSON envelope routing over bare TCP.*
+- 🧠 **[KeeperHub & LLM Orchestration](docs/KEEPERHUB_EXECUTION.md)**
+  *Explains the mathematical fallback protection for LLM rate-limits and the gas projection algorithm used by KeeperHub to prevent MEV extraction.*
+- 🔗 **[Proof of Work (On-Chain Traces)](docs/PROOF_OF_WORK.md)**
+  *Live transaction links and execution traces proving the system runs natively on the Ethereum Sepolia Testnet.*
+
+## Quick Start (V2 - Live Mode)
 
 ```bash
 # 1. Clone AXL + build binary
 git clone https://github.com/gensyn-ai/axl.git
 cd axl && go build -o node ./cmd/node/ && cd ..
 
-# 2. Install deps
+# 2. Setup Virtual Environment
+python3 -m venv venv
+source venv/bin/activate
+
+# 3. Install deps
 pip install -r requirements.txt
 npm install
 
-# 3. Configure
+# 4. Configure
 cp .env.example .env
-# Fill in PRIVATE_KEY, RPC_URL (Sepolia)
+# Fill in PRIVATE_KEY, RPC_URL (Sepolia), and set DEMO_MODE=real
 
-# 4. Start AXL nodes (3 terminals)
+# 5. Start AXL nodes (3 nodes)
 bash setup/1_run_axl_nodes.sh
 
-# 5. Register ENS subnames + set text records
+# 6. Register ENS subnames + set text records
 node setup/2_register_ens.js
 
-# 6. Export AXL peer IDs to .env
+# 7. Export AXL peer IDs to .env
 bash setup/3_export_keys.sh
 
-# 7. Run demo
-bash demo.sh
+# 8. Install tmux (Mac Users)
+brew install tmux
+
+# 9. Run the Live Demo (Matrix Style)
+bash demo.sh --tmux
 ```
 
 ## Prize Tracks

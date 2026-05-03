@@ -57,21 +57,21 @@ gen_key executor
 write_config() {
   local name="$1" api_port="$2" tcp_port="$3" peer="$4"
   local peers_json=""
-  [ -n "$peer" ] && peers_json="\"tls://127.0.0.1:${peer}\""
+  [ -n "$peer" ] && peers_json="\"tcp://127.0.0.1:${peer}\""
   cat > "$KEYS_DIR/${name}.json" <<EOF
 {
   "PrivateKeyPath": "$KEYS_DIR/${name}.pem",
   "api_port": ${api_port},
-  "tcp_port": ${tcp_port},
+  "Listen": ["tcp://127.0.0.1:${tcp_port}"],
   "Peers": [${peers_json}]
 }
 EOF
   echo -e "${G}✓ Config: ${name} api=:${api_port} tcp=:${tcp_port}${N}"
 }
 # Scout is the bootstrap peer; strategy+executor connect to it
-write_config scout    9002 7000 ""
-write_config strategy 9012 7001 7000
-write_config executor 9022 7002 7000
+write_config scout    9002 7700 ""
+write_config strategy 9012 7701 7700
+write_config executor 9022 7702 7700
 
 # ── Kill any running nodes ────────────────────────────────────────
 echo -e "\n${Y}Stopping old nodes…${N}"

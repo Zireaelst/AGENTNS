@@ -66,7 +66,8 @@ def process_order(axl: AXLClient, resolver, msg: dict, order_num: int) -> None:
         tx      = resolver.update_reputation(strategy_ens, new_rep)
         log("executor", f"Reputation {strategy_ens}: {strategy['reputation']} → {new_rep}")
         if tx:
-            log("executor", f"ENS tx: {tx[:20]}…")
+            tx_hash = tx.get("tx_hash") if isinstance(tx, dict) else tx
+            log("executor", f"ENS tx: https://sepolia.etherscan.io/tx/{tx_hash}")
 
     if from_ens and from_ens != strategy_ens:
         scout = resolver.resolve(from_ens)

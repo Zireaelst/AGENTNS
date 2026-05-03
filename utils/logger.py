@@ -30,7 +30,7 @@ COLORS = {
 }
 
 
-def log(agent: str, msg: str, ok_or_color=True):
+def log(agent: str, msg: str, ok=True, color=None, **kwargs):
     """
     Log with agent label. Accepts either:
       - ok: bool (V2 style)

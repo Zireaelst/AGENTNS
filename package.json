@@ -1,0 +1,24 @@
+{
+  "name": "agentns",
+  "version": "1.0.0",
+  "description": "> AI agents that discover each other via ENS, communicate via Gensyn AXL, execute via KeeperHub. > No central registry. No servers. Just P2P.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zireaelst/AGENTNS.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Zireaelst/AGENTNS/issues"
+  },
+  "homepage": "https://github.com/Zireaelst/AGENTNS#readme",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "viem": "^2.48.8"
+  }
+}

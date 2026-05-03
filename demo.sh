@@ -25,6 +25,8 @@ if [ "$1" = "--stop" ]; then
   pkill -f "agents.scout"    2>/dev/null || true
   pkill -f "agents.strategy" 2>/dev/null || true
   pkill -f "agents.executor" 2>/dev/null || true
+  tmux kill-session -t agentns 2>/dev/null || true
+  pkill -f tmux 2>/dev/null || true
   for f in logs/*.pid; do
     [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true
   done
@@ -32,7 +34,7 @@ if [ "$1" = "--stop" ]; then
   exit 0
 fi
 
-clear
+clear || true
 echo -e ""
 echo -e "${B}${C}╔═══════════════════════════════════════════════════════╗${N}"
 echo -e "${B}${C}║  AGENTNS — Decentralized Multi-Agent System           ║${N}"
@@ -84,10 +86,10 @@ if [ "$1" = "--tmux" ]; then
     tmux send-keys -t agentns:0.2 "printf '\033[96m╔═══ SCOUT ═══════════════════════╗\033[0m\n'" Enter
 
     sleep 0.3
-    tmux send-keys -t agentns:0.0 "cd '$PROJECT_ROOT' && python -m agents.executor" Enter
-    tmux send-keys -t agentns:0.1 "cd '$PROJECT_ROOT' && python -m agents.strategy" Enter
+    tmux send-keys -t agentns:0.0 "cd '$PROJECT_ROOT' && source venv/bin/activate && python -m agents.executor" Enter
+    tmux send-keys -t agentns:0.1 "cd '$PROJECT_ROOT' && source venv/bin/activate && python -m agents.strategy" Enter
     sleep 2
-    tmux send-keys -t agentns:0.2 "cd '$PROJECT_ROOT' && python -m agents.scout" Enter
+    tmux send-keys -t agentns:0.2 "cd '$PROJECT_ROOT' && source venv/bin/activate && python -m agents.scout" Enter
 
     echo -e "${G}Attaching to tmux session (Ctrl+B D to detach)…${N}"
     tmux attach-session -t agentns

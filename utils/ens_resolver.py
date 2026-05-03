@@ -34,7 +34,7 @@ class ENSResolver:
 
     def __init__(self):
         from web3 import Web3
-        from eth_ens_namehash import compute_namehash
+        from ens.utils import raw_name_to_hash as compute_namehash
         rpc = os.environ["RPC_URL"]
         self.w3 = Web3(Web3.HTTPProvider(rpc))
         self._nh  = compute_namehash
@@ -95,7 +95,7 @@ class ENSResolver:
                 "outputs":[]}]
         contract = self.w3.eth.contract(address=_RESOLVER_ADDR, abi=abi)
         account  = self.w3.eth.account.from_key(pkey)
-        nonce    = self.w3.eth.get_transaction_count(account.address)
+        nonce    = self.w3.eth.get_transaction_count(account.address, 'pending')
         tx = contract.functions.setText(
             self._node(ens_name), "reputation", str(new_score)
         ).build_transaction({
